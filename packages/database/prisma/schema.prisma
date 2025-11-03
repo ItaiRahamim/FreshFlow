@@ -1,0 +1,534 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum UserRole {
+  OWNER
+  STAFF
+  SUPPLIER
+}
+
+enum DocumentType {
+  PHYTO
+  HEALTH
+  COO
+  COMMERCIAL_INVOICE
+  PROFORMA
+  PAYMENT_INSTRUCTION
+  WIRE_PROOF
+  OTHER
+}
+
+enum DocumentStatus {
+  UPLOADED
+  REVIEWED
+  APPROVED
+  REJECTED
+}
+
+enum DocumentOwnerType {
+  RFQ
+  QUOTE
+  PO
+  INVOICE
+  SHIPMENT
+  CONTAINER
+}
+
+enum Incoterm {
+  EXW
+  FCA
+  CPT
+  CIP
+  DAP
+  DPU
+  DDP
+  FOB
+  CFR
+  CIF
+}
+
+enum ShipmentStatus {
+  BOOKED
+  TRANSIT
+  ARRIVED
+  DELIVERED
+}
+
+enum ContainerType {
+  DRY
+  REEFER
+  OPEN_TOP
+  FLAT_RACK
+}
+
+enum PaymentStatus {
+  PENDING
+  INSTRUCTED
+  ACKNOWLEDGED
+  RECEIVED
+}
+
+model User {
+  id         String   @id @default(cuid())
+  email      String   @unique
+  name       String?
+  passwordHash String?
+  role       UserRole
+  companyId  String
+  company    Company  @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  supplierId String?  @unique
+  supplier   Supplier? @relation(fields: [supplierId], references: [id], onDelete: SetNull)
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  @@index([companyId])
+  @@index([email])
+}
+
+model Company {
+  id          String   @id @default(cuid())
+  name        String
+  legalName   String?
+  taxId       String?
+  address     String?
+  phone       String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  users       User[]
+  suppliers    Supplier[]
+  rfqs        RFQ[]
+  quotes      Quote[]
+  pos         PurchaseOrder[]
+  invoices    Invoice[]
+  shipments   Shipment[]
+  categories  Category[]
+}
+
+model Supplier {
+  id                String   @id @default(cuid())
+  companyId         String
+  company           Company  @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  name              String
+  email             String
+  phone             String?
+  address           String?
+  country           String?
+  defaultIncoterm   Incoterm?
+  reeferCapable     Boolean  @default(false)
+  bankAccountMasked String?  // Masked bank account (e.g., "****1234")
+  bankName          String?
+  bankSwift         String?
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  user              User?    @relation
+  supplierProducts  SupplierProduct[]
+  quotes            Quote[]
+  invoices          Invoice[]
+  shipments         Shipment[]
+  categories        Category[] @relation("SupplierCategories")
+  purchaseOrders    PurchaseOrder[]
+
+  @@index([companyId])
+  @@index([email])
+}
+
+model Category {
+  id              String    @id @default(cuid())
+  companyId       String
+  company         Company   @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  name            String
+  nameEn          String?
+  hsCodeDefault   String?
+  description     String?
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  products        Product[]
+  suppliers       Supplier[] @relation("SupplierCategories")
+
+  @@index([companyId])
+}
+
+model Product {
+  id                    String    @id @default(cuid())
+  categoryId            String
+  category              Category   @relation(fields: [categoryId], references: [id], onDelete: Cascade)
+  name                  String
+  nameEn                String?
+  variety               String?
+  harvestDate           DateTime?
+  packagingType         String?
+  organicCertNo         String?
+  mrlProfileJson        Json?     // MRL (Maximum Residue Limit) profile
+  coldTreatmentRequired Boolean   @default(false)
+  storageConditions     String?
+  createdAt             DateTime  @default(now())
+  updatedAt             DateTime  @updatedAt
+
+  supplierProducts      SupplierProduct[]
+  rfqLines             RFQLine[]
+  quoteLines           QuoteLine[]
+  poLines              POLine[]
+
+  @@index([categoryId])
+}
+
+model SupplierProduct {
+  id              String    @id @default(cuid())
+  supplierId      String
+  supplier        Supplier  @relation(fields: [supplierId], references: [id], onDelete: Cascade)
+  productId       String
+  product         Product   @relation(fields: [productId], references: [id], onDelete: Cascade)
+  defaultSetpointC Float?
+  defaultRhPercent Float?
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  @@unique([supplierId, productId])
+  @@index([supplierId])
+  @@index([productId])
+}
+
+model RFQ {
+  id          String    @id @default(cuid())
+  companyId   String
+  company     Company   @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  rfqNumber   String    @unique
+  title       String?
+  originPort  String?
+  destPort    String?
+  incoterm    Incoterm?
+  notes       String?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  lines       RFQLine[]
+  quotes      Quote[]
+
+  @@index([companyId])
+  @@index([rfqNumber])
+}
+
+model RFQLine {
+  id          String    @id @default(cuid())
+  rfqId       String
+  rfq         RFQ       @relation(fields: [rfqId], references: [id], onDelete: Cascade)
+  productId   String
+  product     Product   @relation(fields: [productId], references: [id], onDelete: Cascade)
+  quantity    Float
+  unit        String    @default("kg")
+  notes       String?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  quoteLines  QuoteLine[]
+
+  @@index([rfqId])
+  @@index([productId])
+}
+
+model Quote {
+  id          String    @id @default(cuid())
+  companyId   String
+  company     Company   @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  rfqId       String
+  rfq         RFQ       @relation(fields: [rfqId], references: [id], onDelete: Cascade)
+  supplierId  String
+  supplier    Supplier  @relation(fields: [supplierId], references: [id], onDelete: Cascade)
+  quoteNumber String    @unique
+  incoterm    Incoterm?
+  leadTimeDays Int?
+  notes       String?
+  status      String    @default("PENDING") // PENDING, ACCEPTED, REJECTED
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  lines       QuoteLine[]
+  pos         PurchaseOrder[]
+
+  @@index([companyId])
+  @@index([rfqId])
+  @@index([supplierId])
+  @@index([quoteNumber])
+}
+
+model QuoteLine {
+  id          String    @id @default(cuid())
+  quoteId     String
+  quote       Quote     @relation(fields: [quoteId], references: [id], onDelete: Cascade)
+  rfqLineId   String
+  rfqLine     RFQLine   @relation(fields: [rfqLineId], references: [id], onDelete: Cascade)
+  productId   String
+  product     Product   @relation(fields: [productId], references: [id], onDelete: Cascade)
+  unitPrice   Float
+  currency    String    @default("USD")
+  quantity    Float
+  total       Float
+  notes       String?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  @@index([quoteId])
+  @@index([rfqLineId])
+  @@index([productId])
+}
+
+model PurchaseOrder {
+  id          String    @id @default(cuid())
+  companyId   String
+  company     Company   @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  quoteId     String?
+  quote       Quote?    @relation(fields: [quoteId], references: [id], onDelete: SetNull)
+  supplierId  String
+  supplier    Supplier  @relation(fields: [supplierId], references: [id], onDelete: Cascade)
+  poNumber    String    @unique
+  incoterm    Incoterm?
+  originPort  String?
+  destPort    String?
+  notes       String?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  lines       POLine[]
+  invoices    Invoice[]
+
+  @@index([companyId])
+  @@index([supplierId])
+  @@index([poNumber])
+}
+
+model POLine {
+  id          String    @id @default(cuid())
+  poId        String
+  po          PurchaseOrder @relation(fields: [poId], references: [id], onDelete: Cascade)
+  productId   String
+  product     Product   @relation(fields: [productId], references: [id], onDelete: Cascade)
+  quantity    Float
+  unit        String    @default("kg")
+  unitPrice   Float
+  currency    String    @default("USD")
+  total       Float
+  notes       String?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  @@index([poId])
+  @@index([productId])
+}
+
+model Invoice {
+  id          String    @id @default(cuid())
+  companyId   String
+  company     Company   @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  poId        String?
+  po          PurchaseOrder? @relation(fields: [poId], references: [id], onDelete: SetNull)
+  supplierId  String
+  supplier    Supplier  @relation(fields: [supplierId], references: [id], onDelete: Cascade)
+  number      String
+  date        DateTime?
+  total       Float
+  currency    String    @default("USD")
+  status      String    @default("PENDING") // PENDING, APPROVED, REJECTED
+  notes       String?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  payments    Payment[]
+
+  @@unique([number, supplierId])
+  @@index([companyId])
+  @@index([supplierId])
+  @@index([poId])
+  @@index([number])
+}
+
+model Payment {
+  id          String    @id @default(cuid())
+  invoiceId   String
+  invoice     Invoice   @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
+  amount      Float
+  currency    String    @default("USD")
+  status      PaymentStatus @default(PENDING)
+  supplierAck Boolean   @default(false)
+  notes       String?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  @@index([invoiceId])
+}
+
+model Document {
+  id          String    @id @default(cuid())
+  ownerType   DocumentOwnerType
+  ownerId     String
+  type        DocumentType
+  status      DocumentStatus @default(UPLOADED)
+  version     Int       @default(1)
+  validFrom   DateTime?
+  validTo     DateTime?
+  refNumber   String?
+  issuedBy    String?
+  s3Key       String
+  s3Url       String?
+  uploadedById String?
+  reviewedById String?
+  notes       String?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  @@index([ownerType, ownerId])
+  @@index([status])
+  @@index([type])
+}
+
+model Shipment {
+  id              String    @id @default(cuid())
+  companyId       String
+  company         Company   @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  supplierId      String
+  supplier        Supplier  @relation(fields: [supplierId], references: [id], onDelete: Cascade)
+  shipmentNumber  String    @unique
+  incoterm        Incoterm?
+  originPort      String?
+  destPort        String?
+  carrier         String?
+  trackingUrl     String?
+  reeferSetpointC Float?
+  rhPercent       Float?
+  tempRangeMin    Float?
+  tempRangeMax    Float?
+  breachPolicy    String?
+  etd             DateTime?
+  eta             DateTime?
+  status          ShipmentStatus @default(BOOKED)
+  notes           String?
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  containers      Container[]
+
+  @@index([companyId])
+  @@index([supplierId])
+  @@index([shipmentNumber])
+}
+
+model Container {
+  id              String    @id @default(cuid())
+  shipmentId      String
+  shipment        Shipment  @relation(fields: [shipmentId], references: [id], onDelete: Cascade)
+  containerNo     String    @unique
+  sealNo          String?
+  type            ContainerType
+  grossWeight     Float?
+  isReefer        Boolean   @default(false)
+  tempLogsUrl     String?
+  breachEventsJson Json?
+  notes           String?
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  @@index([shipmentId])
+  @@index([containerNo])
+}
+
+model TariffRate {
+  id            String    @id @default(cuid())
+  hsCode        String
+  country       String
+  dutyPercent   Float
+  vatPercent    Float
+  lastSyncedAt  DateTime?
+  sourceUrl     String?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  @@unique([hsCode, country])
+  @@index([hsCode])
+  @@index([country])
+}
+
+model FeesTable {
+  id          String    @id @default(cuid())
+  name        String
+  perUnitFee  Float?
+  fixedFee    Float?
+  appliesTo   String?   // e.g., "PORT", "CLEARANCE", "TRUCKING"
+  currency    String    @default("USD")
+  isActive    Boolean   @default(true)
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  @@index([appliesTo])
+}
+
+model LandedCostCalc {
+  id                    String    @id @default(cuid())
+  inputs                Json      // Base price, freight, insurance, etc.
+  outputs               Json      // Calculated landed cost per unit + totals
+  fxRate                Float?
+  insuranceRatePercent   Float?
+  perishabilityRiskFactor Float?
+  createdAt             DateTime  @default(now())
+  updatedAt             DateTime  @updatedAt
+
+  @@index([createdAt])
+}
+
+model Message {
+  id          String    @id @default(cuid())
+  fromUserId  String
+  toUserId    String?
+  subject     String?
+  body        String
+  isRead      Boolean   @default(false)
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  @@index([fromUserId])
+  @@index([toUserId])
+  @@index([isRead])
+}
+
+model Notification {
+  id          String    @id @default(cuid())
+  userId      String
+  title       String
+  body        String
+  type        String?
+  link        String?
+  isRead      Boolean   @default(false)
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  @@index([userId])
+  @@index([isRead])
+}
+
+model AuditLog {
+  id          String    @id @default(cuid())
+  userId      String?
+  action      String
+  entityType  String
+  entityId    String
+  before      Json?
+  after       Json?
+  ipAddress   String?
+  userAgent   String?
+  createdAt   DateTime  @default(now())
+
+  @@index([userId])
+  @@index([entityType, entityId])
+  @@index([createdAt])
+}
+
